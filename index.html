@@ -14,7 +14,8 @@
  * ============================================================= */
 var CONFIG = {
   LIFF_ID: '',   // LIFF ID จาก LINE Developers เช่น '2001234567-AbCdEfGh'
-  API_URL: 'https://script.google.com/macros/s/AKfycbx-2EFLEIow89iCU4Hf5j-7oLIK8ps0cMM8J8hdMVHS8MYvlc4m7xWO8ojbhxA5d79k/exec'    
+  API_URL: 'https://script.google.com/macros/s/AKfycbx-2EFLEIow89iCU4Hf5j-7oLIK8ps0cMM8J8hdMVHS8MYvlc4m7xWO8ojbhxA5d79k/exec'    // ลิงก์ Web App (.../exec) ใส่เฉพาะเมื่อนำไฟล์นี้ไปฝากที่ GitHub Pages
+};
 </script>
 <style>
 :root{
@@ -488,6 +489,10 @@ function show(el, on) { el.classList.toggle('hidden', !on); }
  * ============================================================= */
 function api(action, payload) {
   function unwrap(r) { if (!r || !r.ok) throw new Error((r && r.error) || 'เกิดข้อผิดพลาด กรุณาลองใหม่'); return r.data; }
+  if (CONFIG.API_URL && action === 'init') {
+    return fetch(CONFIG.API_URL + '?action=init', { redirect: 'follow' })
+      .then(function (r) { return r.json(); }).then(unwrap);
+  }
   if (CONFIG.API_URL) {
     return fetch(CONFIG.API_URL, {
       method: 'POST', redirect: 'follow',
