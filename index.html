@@ -91,6 +91,12 @@ img{max-width:100%;display:block}
 .r-tag.first{background:var(--taro);color:#fff}
 .r-sub{font-size:16px;color:var(--muted)}
 .r-note{font-size:15px;color:var(--taro-ink)}
+.r-zone{display:inline-block;align-self:flex-start;margin-top:4px;background:#F1ECE4;color:var(--brown);border-radius:999px;padding:2px 10px;font-size:15px;font-weight:700}
+.zfilter{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.zfilter button{flex:1 1 auto;min-height:48px;border-radius:14px;border:2.5px solid var(--line);background:#FFFDF9;font-size:17px;font-weight:700;padding:6px 12px}
+.zfilter button.on{background:var(--green);border-color:#6E9A7F;color:var(--green-ink)}
+.zfilter-label{font-size:16px;color:var(--muted);margin:0 0 6px;text-align:left}
+.round-hint{background:#FFF7E8;border:2px dashed #E3CFA6;border-radius:16px;padding:14px;font-size:17px;text-align:center;color:var(--brown)}
 .round .radio{width:30px;height:30px;border-radius:50%;border:3px solid #CFC3B3;flex:none;align-self:center;display:flex;align-items:center;justify-content:center}
 .round.on .radio{border-color:#4F7D5F}
 .round.on .radio::after{content:'';width:14px;height:14px;border-radius:50%;background:#4F7D5F}
@@ -317,6 +323,7 @@ textarea.inp{min-height:96px;resize:vertical}
     </div>
     <div id="calendarWrap" class="hidden">
       <div class="cal-title">📅 ปฏิทินรอบจัดส่ง</div>
+      <div id="calZoneWrap" class="hidden"><div class="zfilter-label">บ้านคุณอยู่โซนไหน? แตะเพื่อดูวันส่ง</div><div id="calZones" class="zfilter"></div></div>
       <div id="welcomeRounds" class="rounds"></div>
     </div>
     <div style="margin-top:20px"><button id="btnOrderFromRounds" class="btn btn-primary welcome-cta" style="max-width:none">🧺 สั่งขนมเลย</button></div>
@@ -384,16 +391,16 @@ textarea.inp{min-height:96px;resize:vertical}
       <input id="inpMap" class="inp" type="url" placeholder="https://maps.app.goo.gl/..." style="font-size:17px">
     </div>
 
-    <div class="section" id="roundSection">
-      <h2><span class="num">3</span>เลือกวันรับขนม</h2>
-      <div id="roundList" class="rounds"></div>
-      <div id="roundErr" class="err-msg hidden"></div>
-    </div>
-
     <div class="section">
-      <h2><span class="num" data-n>4</span>พื้นที่จัดส่ง</h2>
+      <h2><span class="num" data-n>3</span>พื้นที่จัดส่ง</h2>
       <div id="zoneList"></div>
       <div id="zoneErr" class="err-msg hidden"></div>
+    </div>
+
+    <div class="section" id="roundSection">
+      <h2><span class="num" data-n>4</span>เลือกวันรับขนม</h2>
+      <div id="roundList" class="rounds"></div>
+      <div id="roundErr" class="err-msg hidden"></div>
     </div>
 
     <div class="section">
@@ -469,7 +476,7 @@ var S = {
   data: null, menuMap: {}, flavorMap: {},
   cart: [], category: 'ทั้งหมด',
   member: null, memberPhone: '', redeem: false,
-  zoneId: '', roundId: '', showAllRounds: false, gpsUrl: '', slip: null,
+  zoneId: '', roundId: '', calZone: null, showAllRounds: false, gpsUrl: '', slip: null,
   profile: null, liffReady: false, lastOrder: null,
   modal: null, screen: 'loading'
 };
@@ -489,10 +496,6 @@ function show(el, on) { el.classList.toggle('hidden', !on); }
  * ============================================================= */
 function api(action, payload) {
   function unwrap(r) { if (!r || !r.ok) throw new Error((r && r.error) || 'เกิดข้อผิดพลาด กรุณาลองใหม่'); return r.data; }
-  if (CONFIG.API_URL && action === 'init') {
-    return fetch(CONFIG.API_URL + '?action=init', { redirect: 'follow' })
-      .then(function (r) { return r.json(); }).then(unwrap);
-  }
   if (CONFIG.API_URL) {
     return fetch(CONFIG.API_URL, {
       method: 'POST', redirect: 'follow',
@@ -595,6 +598,10 @@ function goBack() {
  *  ปฏิทินรอบจัดส่ง
  * ============================================================= */
 function rounds() { return S.data.rounds || []; }
+/* รอบที่ไม่ได้ระบุโซน (allZones) = ส่งทุกโซน */
+function roundForZone(r, zid) { return r.allZones !== false || !zid || (r.zoneIds || []).indexOf(zid) >= 0; }
+function zoneSpecific() { return rounds().some(function (r) { return r.allZones === false; }); }
+function zoneName(zid) { var z = S.data.zones.filter(function (x) { return x.id === zid; })[0]; return z ? z.name : ''; }
 function openRounds() { return rounds().filter(function (r) { return r.status === 'open'; }); }
 function canOrder() { return S.data.shop.isOpen && (!S.data.requireRound || openRounds().length > 0); }
 function closedReason() {
@@ -615,7 +622,8 @@ function roundHtml(r, opts) {
   var inner = '<span class="r-date"><span class="r-dow">' + esc(r.dowShort) + '</span><span class="r-day">' + r.day + '</span><span class="r-mon">' + esc(r.month) + '</span></span>' +
     '<span class="r-body"><span class="r-top"><span class="r-name">วัน' + esc(r.dow) + '</span>' + tag + '</span>' +
     (r.time ? '<span class="r-sub">🕐 ส่งช่วง ' + esc(r.time) + '</span>' : '') +
-    '<span class="r-sub">' + sub + '</span>' + (r.note ? '<span class="r-note">💬 ' + esc(r.note) + '</span>' : '') + '</span>';
+    '<span class="r-sub">' + sub + '</span>' + (r.note ? '<span class="r-note">💬 ' + esc(r.note) + '</span>' : '') +
+    (zoneSpecific() ? '<span class="r-zone">🛵 ' + (r.allZones !== false ? 'ส่งทุกโซน' : 'ส่ง' + esc((r.zones || []).join(', '))) + '</span>' : '') + '</span>';
   if (sel) return '<button class="' + cls + '" data-round="' + esc(r.id) + '"' + (r.status !== 'open' ? ' disabled' : '') + '>' + inner + '<span class="radio"></span></button>';
   return '<div class="' + cls + '">' + inner + '</div>';
 }
@@ -624,16 +632,33 @@ function renderWelcomeRounds() {
   show($('calendarWrap'), list.length > 0);
   show($('nextRoundWrap'), list.length === 0);
   if (!list.length) return;
-  $('welcomeRounds').innerHTML = list.map(function (r) { return roundHtml(r, {}); }).join('');
+  var zs = zoneSpecific() && S.data.zones.length > 1;
+  show($('calZoneWrap'), zs);
+  if (S.calZone === null) S.calZone = S.zoneId || '';
+  var cz = zs ? S.calZone : '';
+  if (zs) $('calZones').innerHTML = '<button data-calzone=""' + (!cz ? ' class="on"' : '') + '>ทุกโซน</button>' + S.data.zones.map(function (z) {
+    return '<button data-calzone="' + esc(z.id) + '"' + (cz === z.id ? ' class="on"' : '') + '>' + esc(z.name) + '</button>';
+  }).join('');
+  var shown = list.filter(function (r) { return roundForZone(r, cz); });
+  $('welcomeRounds').innerHTML = shown.length ? shown.map(function (r) { return roundHtml(r, {}); }).join('')
+    : '<div class="round-hint">ยังไม่มีรอบส่ง' + esc(zoneName(cz)) + 'ในช่วงนี้<br>ทักแชทร้านมาสอบถามได้เลยนะคะ 💚</div>';
 }
 function renderRoundPicker() {
   show($('roundSection'), !!S.data.requireRound);
-  Array.prototype.forEach.call(document.querySelectorAll('[data-n]'), function (el, i) { el.textContent = (S.data.requireRound ? 4 : 3) + i; });
+  var n = 3;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-n]'), function (el) {
+    if (el.closest('.section').classList.contains('hidden')) return;
+    el.textContent = n++;
+  });
   if (!S.data.requireRound) return;
-  var open = openRounds();
-  if (S.roundId && !open.some(function (r) { return r.id === S.roundId; })) S.roundId = '';
-  if (!S.roundId && open.length === 1) S.roundId = open[0].id;
-  $('roundList').innerHTML = rounds().map(function (r) { return roundHtml(r, { selectable: true }); }).join('');
+  var needZone = zoneSpecific() && !S.zoneId;
+  var list = rounds().filter(function (r) { return roundForZone(r, S.zoneId); });
+  var open = list.filter(function (r) { return r.status === 'open'; });
+  if (S.roundId && (needZone || !open.some(function (r) { return r.id === S.roundId; }))) S.roundId = '';
+  if (!S.roundId && !needZone && open.length === 1) S.roundId = open[0].id;
+  if (needZone) { $('roundList').innerHTML = '<div class="round-hint">👆 เลือก <b>พื้นที่จัดส่ง</b> ด้านบนก่อนนะคะ<br>แล้วจะเห็นวันที่ร้านไปส่งโซนของคุณ</div>'; return; }
+  $('roundList').innerHTML = open.length ? list.map(function (r) { return roundHtml(r, { selectable: true }); }).join('')
+    : '<div class="round-hint">ตอนนี้ยังไม่มีรอบส่ง' + esc(zoneName(S.zoneId)) + 'ที่เปิดรับค่ะ<br>ทักแชทร้านมาสอบถามได้เลยนะคะ 💚</div>';
 }
 
 var poseIdx = 0;
@@ -1148,7 +1173,8 @@ document.addEventListener('click', function (e) {
     return;
   }
   if (d.round) { S.roundId = d.round; fieldErr('roundErr', ''); renderRoundPicker(); return; }
-  if (d.zone) { S.zoneId = d.zone; fieldErr('zoneErr', ''); saveMe(); renderZones(); renderSummary(); renderPayment(); return; }
+  if (d.zone) { S.zoneId = d.zone; S.calZone = d.zone; fieldErr('zoneErr', ''); saveMe(); renderZones(); renderRoundPicker(); renderSummary(); renderPayment(); return; }
+  if (d.calzone !== undefined) { S.calZone = d.calzone; renderWelcomeRounds(); return; }
   if (d.same && S.modal) { S.modal.pairs = [d.same, d.same, d.same]; renderModal(); return; }
   if (d.pair !== undefined && S.modal) { S.modal.pairs[+d.pair] = d.fid; renderModal(); return; }
   if (t.id === 'btnRedeem') { S.redeem = !S.redeem; renderMember(); renderSummary(); renderPayment(); return; }
@@ -1220,7 +1246,7 @@ var DEMO = {
       var x = new Date(d.getFullYear(), d.getMonth(), d.getDate() + add + 7 * i), c = new Date(x.getTime() - 2 * 864e5);
       out.push({ id: 'R00' + (i + 1), dateKey: '', dow: names[x.getDay()], dowShort: sh[x.getDay()], day: x.getDate(), month: mon[x.getMonth()], time: '13:00–17:00',
         cutoffText: sh[c.getDay()] + ' ' + c.getDate() + ' ' + mon[c.getMonth()] + ' 18:00 น.', status: st[i], statusText: stT[st[i]], remaining: st[i] === 'open' ? 30 - 7 * i : 0,
-        note: i === 0 ? 'รอบแรก ส่งทั่วเมือง' : '', label: 'วัน' + names[x.getDay()] + 'ที่ ' + x.getDate() + ' ' + mon[x.getMonth()] + ' ' + ((x.getFullYear() + 543) % 100) + ' (13:00–17:00)' });
+        note: i === 0 ? 'รอบแรก ส่งทั่วเมือง' : '', allZones: i > 1, zones: i === 0 ? ['โซนใกล้บ้าน'] : (i === 1 ? ['โซนไกลบ้าน'] : []), zoneIds: i === 0 ? ['Z1'] : (i === 1 ? ['Z2'] : []), label: 'วัน' + names[x.getDay()] + 'ที่ ' + x.getDate() + ' ' + mon[x.getMonth()] + ' ' + ((x.getFullYear() + 543) % 100) + ' (13:00–17:00)' });
     }
     return out;
   },
@@ -1254,6 +1280,7 @@ var DEMO = {
     var d = this.init(), menu = {}, fl = {};
     var rr = d.rounds.filter(function (r) { return r.id === p.roundId; })[0];
     if (!rr || rr.status !== 'open') throw new Error('กรุณาเลือกวันรับขนมค่ะ');
+    if (!roundForZone(rr, p.zoneId)) throw new Error('รอบ' + rr.label + ' ส่งเฉพาะ ' + rr.zones.join(', ') + ' กรุณาเลือกวันส่งของโซนคุณนะคะ');
     d.menu.forEach(function (m) { menu[m.id] = m; }); d.flavors.forEach(function (f) { fl[f.id] = f.name; });
     var lines = p.items.map(function (it) {
       var m = menu[it.productId], l = { productId: m.id, name: m.name, qty: it.qty, unitPrice: m.price, total: m.price * it.qty, type: m.type };
