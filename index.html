@@ -218,7 +218,9 @@ textarea.inp{min-height:96px;resize:vertical}
 .copy-btn{margin-left:6px;font-size:15px;padding:4px 12px;border-radius:999px;background:var(--brown-soft);font-weight:700}
 .pay-amount{font-family:'Mitr',sans-serif;font-size:22px;margin:8px 0 2px}
 .pay-amount b{color:var(--brown);font-size:30px;font-weight:500}
-.slip-btn{margin-top:14px}
+.slip-btn{margin-top:14px;display:block;text-align:center;cursor:pointer}
+.later-btn{display:block;width:100%;margin-top:10px;background:#fff;border:2px dashed #D9CFE6;color:var(--taro-ink);border-radius:14px;padding:12px;font-size:16px;font-weight:700}
+.later-btn.on{background:var(--taro-soft);border-style:solid;border-color:var(--taro)}
 .slip-preview{margin-top:12px;display:flex;align-items:center;gap:12px;background:var(--green-soft);border-radius:16px;padding:10px}
 .slip-preview img{width:76px;height:96px;object-fit:cover;border-radius:10px}
 .slip-preview div{flex:1;color:#2F5B3E;font-weight:700}
@@ -412,9 +414,10 @@ textarea.inp{min-height:96px;resize:vertical}
       <h2><span class="num" data-n>6</span>ชำระเงิน (พร้อมเพย์)</h2>
       <div class="pay-amount">ยอดที่ต้องโอน <b id="payAmount">0</b> บาท</div>
       <div id="qrArea"></div>
-      <input id="slipInput" type="file" accept="image/*" class="hidden">
-      <button id="btnSlip" class="btn btn-taro slip-btn">📎 แนบสลิปโอนเงิน</button>
+      <input id="slipInput" type="file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">
+      <label for="slipInput" id="btnSlip" class="btn btn-taro slip-btn">📎 แนบสลิปโอนเงิน</label>
       <div id="slipPreview"></div>
+      <button type="button" id="btnSlipLater" class="later-btn">📩 แนบสลิปไม่ได้? กดที่นี่ แล้วส่งสลิปทางแชท LINE ทีหลัง</button>
       <div id="slipErr" class="err-msg hidden"></div>
     </div>
 
@@ -909,22 +912,38 @@ function renderPayment() {
   $('slipPreview').innerHTML = S.slip
     ? '<div class="slip-preview"><img src="' + S.slip + '" alt="สลิป"><div>✅ แนบสลิปแล้ว<br><span style="font-weight:400;font-size:15px">กดปุ่มด้านบนเพื่อเปลี่ยนรูป</span></div></div>' : '';
   $('btnSlip').textContent = S.slip ? '🔄 เปลี่ยนรูปสลิป' : '📎 แนบสลิปโอนเงิน';
+  show($('btnSlipLater'), !S.slip);
+  $('btnSlipLater').classList.toggle('on', !!S.slipLater && !S.slip);
+  $('btnSlipLater').textContent = S.slipLater && !S.slip
+    ? '✅ จะส่งสลิปทางแชท LINE ทีหลัง (กดอีกครั้งเพื่อยกเลิก)'
+    : '📩 แนบสลิปไม่ได้? กดที่นี่ แล้วส่งสลิปทางแชท LINE ทีหลัง';
 }
 
 /** ย่อรูปสลิปให้เล็กลง (อัปโหลดเร็ว ประหยัดเน็ต) */
 function compressImage(file) {
   return new Promise(function (resolve, reject) {
-    var reader = new FileReader();
-    reader.onerror = function () { reject(new Error('อ่านไฟล์รูปไม่สำเร็จ')); };
+    var reader = new FileReader(), done = false;
+    var finish = function (fn, v) { if (!done) { done = true; fn(v); } };
+    // ย่อรูปไม่ได้ (เช่น รูป HEIC / เครื่องหน่วยความจำน้อย) → ส่งรูปต้นฉบับแทน ถ้าไม่ใหญ่เกิน 6MB
+    var useOriginal = function () {
+      if (reader.result && /^data:image\//.test(reader.result) && file.size < 6 * 1024 * 1024) finish(resolve, reader.result);
+      else finish(reject, new Error('แนบรูปนี้ไม่ได้ ลองแคปหน้าจอสลิปแล้วแนบรูปที่แคปแทนนะคะ'));
+    };
+    reader.onerror = function () { finish(reject, new Error('อ่านไฟล์รูปไม่สำเร็จ ลองเลือกรูปใหม่อีกครั้งนะคะ')); };
     reader.onload = function () {
       var img = new Image();
-      img.onerror = function () { reject(new Error('ไฟล์นี้ไม่ใช่รูปภาพ')); };
+      setTimeout(useOriginal, 15000);
+      img.onerror = useOriginal;
       img.onload = function () {
         var max = 1400, w = img.width, h = img.height, k = Math.min(1, max / Math.max(w, h));
         var cv = document.createElement('canvas'); cv.width = Math.round(w * k); cv.height = Math.round(h * k);
         var ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
-        ctx.drawImage(img, 0, 0, cv.width, cv.height);
-        resolve(cv.toDataURL('image/jpeg', 0.8));
+        try {
+          ctx.drawImage(img, 0, 0, cv.width, cv.height);
+          var out = cv.toDataURL('image/jpeg', 0.8);
+          if (out.length < 1000) return useOriginal();
+          finish(resolve, out);
+        } catch (err) { useOriginal(); }
       };
       img.src = reader.result;
     };
@@ -1014,7 +1033,7 @@ function validate() {
   bad('inpAddress', 'addrErr', $('inpAddress').value.trim() ? '' : 'กรุณากรอกที่อยู่จัดส่ง');
   if (S.data.requireRound) bad(null, 'roundErr', S.roundId ? '' : 'กรุณาเลือกวันรับขนม');
   bad(null, 'zoneErr', S.zoneId ? '' : 'กรุณาเลือกพื้นที่จัดส่ง');
-  bad(null, 'slipErr', (S.slip || !S.data.rules.requireSlip) ? '' : 'กรุณาแนบสลิปโอนเงินก่อนนะคะ');
+  bad(null, 'slipErr', (S.slip || S.slipLater || !S.data.rules.requireSlip) ? '' : 'กรุณาแนบสลิปโอนเงิน (หรือกด "ส่งสลิปทางแชททีหลัง") ก่อนนะคะ');
   if (!S.cart.length) { toast('ตะกร้ายังว่างอยู่ค่ะ'); return false; }
   if (firstBad) { firstBad.scrollIntoView({ behavior: 'smooth', block: 'center' }); toast('กรุณากรอกข้อมูลให้ครบนะคะ'); return false; }
   return true;
@@ -1033,6 +1052,7 @@ function submitOrder() {
     items: S.cart.map(function (c) { return { productId: c.productId, qty: c.qty, pairs: c.pairs }; }),
     redeem: !!(S.member && S.member.phone === phone && S.redeem),
     slip: S.slip ? { data: S.slip } : null,
+    slipLater: !S.slip && !!S.slipLater,
     lineUserId: S.profile ? S.profile.userId : ''
   };
   $('submitError').innerHTML = '';
@@ -1040,7 +1060,7 @@ function submitOrder() {
   api('submitOrder', payload).then(function (order) {
     show($('overlay'), false);
     S.lastOrder = order;
-    S.cart = []; saveCart(); S.slip = null; S.redeem = false; S.member = null; S.memberPhone = ''; S.gpsUrl = '';
+    S.cart = []; saveCart(); S.slip = null; S.slipLater = false; S.redeem = false; S.member = null; S.memberPhone = ''; S.gpsUrl = '';
     renderGps();
     renderSuccess(order);
     showScreen('success');
@@ -1190,7 +1210,7 @@ $('btnOrderNow').onclick = function () { showScreen('menu'); };
 $('btnGoCart').onclick = function () { showScreen('checkout'); };
 $('btnMore').onclick = function () { showScreen('menu'); };
 $('btnGps').onclick = getGps;
-$('btnSlip').onclick = function () { $('slipInput').click(); };
+$('btnSlipLater').onclick = function () { S.slipLater = !S.slipLater; if (S.slipLater) fieldErr('slipErr', ''); renderPayment(); };
 $('btnSubmit').onclick = submitOrder;
 $('btnClose').onclick = function () {
   if (S.liffReady && liff.isInClient()) { try { liff.closeWindow(); return; } catch (e) {} }
