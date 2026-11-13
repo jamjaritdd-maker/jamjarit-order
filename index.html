@@ -245,6 +245,11 @@ textarea.inp{min-height:96px;resize:vertical}
 .pair-box.done{border-color:var(--green)}
 .pair-title{font-family:'Mitr',sans-serif;font-size:19px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
 .pair-title .chosen{font-size:16px;color:#2F5B3E;font-family:'Sarabun',sans-serif;font-weight:700}
+.pc-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 4px;border-top:1px dashed var(--line)}
+.pc-row:first-of-type{border-top:0}
+.pc-row.on .pc-name{color:#2F5B3E}
+.pc-row.out{opacity:.5}
+.pc-name{font-size:18px;font-weight:700}
 .chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
 .chip{min-height:56px;padding:8px 10px;border-radius:16px;border:2.5px solid var(--line);background:#FFFDF9;font-size:18px;font-weight:600;line-height:1.25}
 .chip.on{background:var(--green);border-color:#6E9A7F;color:var(--green-ink)}
@@ -448,7 +453,7 @@ textarea.inp{min-height:96px;resize:vertical}
       <img data-img="thongmuan" alt="">
       <div>
         <h2 id="fmTitle">เลือกไส้ทองม้วน</h2>
-        <p>1 กล่อง = 6 ชิ้น แบ่งเป็น 3 คู่ (คู่ละ 2 ชิ้น ไส้เดียวกัน)</p>
+        <p id="fmSub">1 กล่อง = 6 ชิ้น แบ่งเป็น 3 คู่ (คู่ละ 2 ชิ้น ไส้เดียวกัน)</p>
       </div>
       <button class="close-x" id="fmClose" aria-label="ปิด">✕</button>
     </div>
@@ -553,8 +558,8 @@ function restoreSaved() {
   S.cart = cart.filter(function (c) {
     var m = S.menuMap[c.productId];
     if (!m || !m.available || !(c.qty > 0)) return false;
-    if (m.type === 'flavor3') {
-      return Array.isArray(c.pairs) && c.pairs.length === 3 && c.pairs.every(function (f) { return S.flavorMap[f] && S.flavorMap[f].available; });
+    if (m.type === 'flavor3' || m.type === 'piece') {
+      return Array.isArray(c.pairs) && c.pairs.length === slotCount(m) && c.pairs.every(function (f) { return S.flavorMap[f] && S.flavorMap[f].available; });
     }
     return true;
   });
@@ -706,8 +711,8 @@ function renderMenuScreen() {
   renderBottomBar();
 }
 function thumbHtml(m) {
-  var ph = m.type === 'flavor3' ? IMG.thongmuan : IMG.hello;
-  if (m.image) return '<div class="thumb"><img src="' + esc(m.image) + '" alt="" loading="lazy" data-ph="' + (m.type === 'flavor3' ? 'thongmuan' : 'hello') + '" onerror="imgFallback(this)"></div>';
+  var ph = isFlavorMenu(m) ? IMG.thongmuan : IMG.hello;
+  if (m.image) return '<div class="thumb"><img src="' + esc(m.image) + '" alt="" loading="lazy" data-ph="' + (isFlavorMenu(m) ? 'thongmuan' : 'hello') + '" onerror="imgFallback(this)"></div>';
   return '<div class="thumb"><img class="ph" src="' + ph + '" alt=""></div>';
 }
 function imgFallback(img) { img.onerror = null; img.className = 'ph'; img.src = IMG[img.dataset.ph] || IMG.hello; }
@@ -725,6 +730,7 @@ function renderMenu() {
       '<div class="item-body"><div class="item-name">' + esc(m.name) + '</div>' +
       (m.desc ? '<div class="item-desc">' + esc(m.desc) + '</div>' : '') +
       (m.type === 'flavor3' ? '<div><span class="badge">เลือกไส้ได้ 3 คู่</span></div>' : '') +
+      (m.type === 'piece' ? '<div><span class="badge">' + (m.pieces === 1 ? 'เลือกไส้ได้' : 'เลือกไส้คละได้ทีละชิ้น (' + m.pieces + ' ชิ้น)') + '</span></div>' : '') +
       (!m.available ? '<div><span class="badge out">หมดชั่วคราว</span></div>' : '') +
       '<div class="item-foot"><div class="item-price">' + money(m.price) + ' <small>บาท</small></div>';
     if (m.available && orderOk) {
@@ -734,9 +740,9 @@ function renderMenu() {
         '<button class="step-btn plus" data-plus="' + esc(m.id) + '" aria-label="เพิ่ม">+</button></div>';
     }
     html += '</div></div></div>';
-    if (m.type === 'flavor3' && q) {
+    if (isFlavorMenu(m) && q) {
       html += '<div class="box-list">' + S.cart.filter(function (c) { return c.productId === m.id; }).map(function (c) {
-        return '<div>📦 ' + c.qty + ' กล่อง: ' + esc(flavorSummary(pairNames(c.pairs), 1)) + '</div>';
+        return '<div>📦 ' + c.qty + ' ' + boxWord(m) + ': ' + esc(flavorSummary(pairNames(c.pairs), 1, m.type === 'piece')) + '</div>';
       }).join('') + '</div>';
     }
     return html + '</div>';
@@ -768,16 +774,23 @@ function changeQty(key, d) {
 }
 function pairNames(pairs) { return (pairs || []).map(function (id) { return S.flavorMap[id] ? S.flavorMap[id].name : id; }); }
 function flavorLabel(n) { return /^ไส้/.test(n) ? n : 'ไส้' + n; }
-function flavorSummary(names, qty) {
+function flavorSummary(names, qty, perPiece) {
   var order = [], count = {};
   names.forEach(function (n) { if (!(n in count)) { count[n] = 0; order.push(n); } count[n]++; });
-  return order.map(function (n) { var c = count[n] * (qty || 1); return flavorLabel(n) + ' ' + c + ' คู่ (' + (c * 2) + ' ชิ้น)'; }).join(', ');
+  return order.map(function (n) {
+    var c = count[n] * (qty || 1);
+    return flavorLabel(n) + ' ' + (perPiece ? c + ' ชิ้น' : c + ' คู่ (' + (c * 2) + ' ชิ้น)');
+  }).join(', ');
 }
+/* เมนูที่ต้องเลือกไส้: flavor3 = 3 คู่ (คู่ละ 2 ชิ้น), piece = เลือกคละได้ทีละชิ้น */
+function isFlavorMenu(m) { return m.type === 'flavor3' || m.type === 'piece'; }
+function slotCount(m) { return m.type === 'piece' ? (m.pieces || 6) : 3; }
+function boxWord(m) { return m.type === 'piece' && m.pieces === 1 ? 'ชิ้น' : 'กล่อง'; }
 function lineInfo(c) {
   var m = S.menuMap[c.productId];
   var info = { m: m, total: m.price * c.qty };
-  info.text = m.type === 'flavor3'
-    ? m.name + ' (' + c.qty + ' กล่อง): ' + flavorSummary(pairNames(c.pairs), c.qty)
+  info.text = isFlavorMenu(m)
+    ? m.name + ' (' + c.qty + ' ' + boxWord(m) + '): ' + flavorSummary(pairNames(c.pairs), c.qty, m.type === 'piece')
     : m.name + ' x ' + c.qty;
   return info;
 }
@@ -817,10 +830,10 @@ function renderCart() {
   }
   $('cartLines').innerHTML = S.cart.map(function (c) {
     var info = lineInfo(c), m = info.m;
-    var detail = m.type === 'flavor3'
-      ? '<div class="cl-detail">' + esc(flavorSummary(pairNames(c.pairs), c.qty)) + '</div>' : '';
+    var detail = isFlavorMenu(m)
+      ? '<div class="cl-detail">' + esc(flavorSummary(pairNames(c.pairs), c.qty, m.type === 'piece')) + '</div>' : '';
     return '<div class="cart-line">' + thumbHtml(m) + '<div class="cl-body">' +
-      '<div class="cl-name">' + esc(m.name) + (m.type === 'flavor3' ? ' (' + c.qty + ' กล่อง)' : '') + '</div>' + detail +
+      '<div class="cl-name">' + esc(m.name) + (isFlavorMenu(m) ? ' (' + c.qty + ' ' + boxWord(m) + ')' : '') + '</div>' + detail +
       '<div class="cl-row"><div class="cl-price">' + money(info.total) + ' บาท</div>' +
       '<div class="stepper"><button class="step-btn minus" data-cminus="' + esc(c.key) + '" aria-label="ลด">−</button>' +
       '<span class="step-qty">' + c.qty + '</span>' +
@@ -977,8 +990,11 @@ function renderGps() {
 function openFlavorModal(pid) {
   var m = S.menuMap[pid];
   if (!S.data.flavors.some(function (f) { return f.available; })) { toast('ขออภัยค่ะ ไส้หมดทุกรสแล้ว'); return; }
-  S.modal = { pid: pid, pairs: [null, null, null], same: null };
+  S.modal = m.type === 'piece' ? { pid: pid, piece: true, counts: {} } : { pid: pid, pairs: [null, null, null], same: null };
   $('fmTitle').textContent = 'เลือกไส้' + (m.name.length <= 18 ? ' ' + m.name : '');
+  $('fmSub').textContent = m.type === 'piece'
+    ? (m.pieces === 1 ? 'เลือกไส้ที่ชอบ 1 ชิ้น' : '1 กล่อง = ' + m.pieces + ' ชิ้น เลือกไส้คละได้ทีละชิ้น ไส้ไหนกี่ชิ้นก็ได้')
+    : '1 กล่อง = 6 ชิ้น แบ่งเป็น 3 คู่ (คู่ละ 2 ชิ้น ไส้เดียวกัน)';
   renderModal();
   show($('flavorModal'), true);
   document.body.style.overflow = 'hidden';
@@ -989,6 +1005,7 @@ function closeModal() {
 }
 function renderModal() {
   var md = S.modal; if (!md) return;
+  if (md.piece) return renderPieceModal();
   var fl = S.data.flavors;
   var chip = function (f, attrs, on, extra) {
     return '<button class="chip' + (extra || '') + (on ? ' on' : '') + '" ' + attrs + (f.available ? '' : ' disabled') + '>' +
@@ -1013,6 +1030,39 @@ function renderModal() {
     : 'เลือกแล้ว ' + md.pairs.filter(Boolean).length + ' / 3 คู่';
   $('fmAdd').disabled = !done;
   $('fmAdd').textContent = done ? 'ใส่ตะกร้า (' + money(price) + ' บาท)' : 'กรุณาเลือกให้ครบ 3 คู่';
+}
+
+/* เลือกไส้คละทีละชิ้น: กด + / − ที่แต่ละไส้ จนครบจำนวนชิ้นในกล่อง */
+function pieceTotal(md) { return Object.keys(md.counts).reduce(function (a, k) { return a + md.counts[k]; }, 0); }
+function piecePairs(md) {
+  var out = [];
+  S.data.flavors.forEach(function (f) { for (var i = 0; i < (md.counts[f.id] || 0); i++) out.push(f.id); });
+  return out;
+}
+function renderPieceModal() {
+  var md = S.modal, m = S.menuMap[md.pid], n = slotCount(m), tot = pieceTotal(md), full = tot >= n;
+  var fl = S.data.flavors, html = '';
+  if (n > 1) {
+    html += '<div class="same-box"><h3>⚡ เลือกรสเดียวกันทั้งกล่อง <span class="hint">(กดครั้งเดียว ได้ครบ ' + n + ' ชิ้น)</span></h3><div class="chips">' +
+      fl.map(function (f) {
+        return '<button class="chip same' + (md.counts[f.id] === n ? ' on' : '') + '" data-psame="' + esc(f.id) + '"' + (f.available ? '' : ' disabled') + '>' +
+          esc(flavorLabel(f.name)) + (f.available ? '' : ' (หมด)') + '</button>';
+      }).join('') + '</div></div>';
+  }
+  html += '<div class="pair-box' + (full ? ' done' : '') + '"><div class="pair-title"><span>' + (n > 1 ? 'หรือเลือกคละไส้ทีละชิ้น' : 'เลือกไส้') + '</span>' +
+    '<span class="' + (full ? 'chosen' : 'hint') + '">' + (full ? '✓ ' : '') + tot + ' / ' + n + ' ชิ้น</span></div>' +
+    fl.map(function (f) {
+      var c = md.counts[f.id] || 0;
+      return '<div class="pc-row' + (c ? ' on' : '') + (f.available ? '' : ' out') + '"><div class="pc-name">' + esc(flavorLabel(f.name)) + (f.available ? '' : ' (หมด)') + '</div>' +
+        '<div class="stepper"><button class="step-btn minus" data-pminus="' + esc(f.id) + '" aria-label="ลด"' + (c ? '' : ' disabled') + '>−</button>' +
+        '<span class="step-qty">' + c + '</span>' +
+        '<button class="step-btn plus" data-pplus="' + esc(f.id) + '" aria-label="เพิ่ม"' + (f.available && !full ? '' : ' disabled') + '>+</button></div></div>';
+    }).join('') + '</div>';
+  $('fmBody').innerHTML = html;
+  $('fmSummary').textContent = full ? '1 ' + boxWord(m) + ': ' + flavorSummary(pairNames(piecePairs(md)), 1, true)
+    : 'เลือกแล้ว ' + tot + ' / ' + n + ' ชิ้น' + (tot ? ' (เหลืออีก ' + (n - tot) + ' ชิ้น)' : '');
+  $('fmAdd').disabled = !full;
+  $('fmAdd').textContent = full ? 'ใส่ตะกร้า (' + money(m.price) + ' บาท)' : 'กรุณาเลือกให้ครบ ' + n + ' ชิ้น';
 }
 
 /* =============================================================
@@ -1178,7 +1228,7 @@ document.addEventListener('click', function (e) {
   if (d.cat) { S.category = d.cat; renderMenuScreen(); return; }
   if (d.plus) {
     var m = S.menuMap[d.plus];
-    if (m.type === 'flavor3') return openFlavorModal(m.id);
+    if (isFlavorMenu(m)) return openFlavorModal(m.id);
     addToCart(m.id, null, 1); renderMenu(); renderBottomBar(); return;
   }
   if (d.minus) {
@@ -1195,6 +1245,13 @@ document.addEventListener('click', function (e) {
   if (d.round) { S.roundId = d.round; fieldErr('roundErr', ''); renderRoundPicker(); return; }
   if (d.zone) { S.zoneId = d.zone; S.calZone = d.zone; fieldErr('zoneErr', ''); saveMe(); renderZones(); renderRoundPicker(); renderSummary(); renderPayment(); return; }
   if (d.calzone !== undefined) { S.calZone = d.calzone; renderWelcomeRounds(); return; }
+  if (S.modal && S.modal.piece && (d.psame || d.pplus || d.pminus)) {
+    var md = S.modal, n = slotCount(S.menuMap[md.pid]);
+    if (d.psame) md.counts = {}, md.counts[d.psame] = n;
+    else if (d.pplus && pieceTotal(md) < n) md.counts[d.pplus] = (md.counts[d.pplus] || 0) + 1;
+    else if (d.pminus && md.counts[d.pminus]) { md.counts[d.pminus]--; if (!md.counts[d.pminus]) delete md.counts[d.pminus]; }
+    renderModal(); return;
+  }
   if (d.same && S.modal) { S.modal.pairs = [d.same, d.same, d.same]; renderModal(); return; }
   if (d.pair !== undefined && S.modal) { S.modal.pairs[+d.pair] = d.fid; renderModal(); return; }
   if (t.id === 'btnRedeem') { S.redeem = !S.redeem; renderMember(); renderSummary(); renderPayment(); return; }
@@ -1219,10 +1276,13 @@ $('btnClose').onclick = function () {
 $('fmClose').onclick = closeModal;
 $('flavorModal').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
 $('fmAdd').onclick = function () {
-  if (!S.modal || !S.modal.pairs.every(Boolean)) return;
-  addToCart(S.modal.pid, S.modal.pairs.slice(), 1);
+  var md = S.modal; if (!md) return;
+  var pairs = md.piece ? piecePairs(md) : md.pairs.slice();
+  if (md.piece ? pairs.length !== slotCount(S.menuMap[md.pid]) : !pairs.every(Boolean)) return;
+  var word = boxWord(S.menuMap[md.pid]);
+  addToCart(md.pid, pairs, 1);
   closeModal(); renderMenu(); renderBottomBar();
-  toast('ใส่ตะกร้าแล้ว 1 กล่อง 🧺');
+  toast('ใส่ตะกร้าแล้ว 1 ' + word + ' 🧺');
 };
 $('slipInput').onchange = function () {
   var f = this.files && this.files[0]; if (!f) return;
@@ -1281,6 +1341,7 @@ var DEMO = {
       rules: { newMemberDiscount: 10, stampsForReward: 10, rewardDiscount: 50, rewardText: 'แลกส่วนลด 50 บาท', requireSlip: true },
       menu: [
         { id: 'M001', category: 'ทองม้วนกรอบห่อสด', name: 'ทองม้วนกรอบห่อสด', price: 120, type: 'flavor3', image: '', available: true, desc: '1 กล่อง 6 ชิ้น เลือกได้ 3 คู่ คู่ละ 2 ชิ้น' },
+        { id: 'M006', category: 'ทองม้วนกรอบห่อสด', name: 'ทองม้วนห่อสด คละไส้', price: 130, type: 'piece', pieces: 6, image: '', available: true, desc: '1 กล่อง 6 ชิ้น เลือกไส้ได้ทีละชิ้น' },
         { id: 'M002', category: 'ขนมอื่นๆ', name: 'ขนมชั้นดอกอัญชัน', price: 60, type: 'normal', image: '', available: true, desc: 'ถาดเล็ก 8 ชิ้น' },
         { id: 'M003', category: 'ขนมอื่นๆ', name: 'ขนมเปียกปูนใบเตย', price: 60, type: 'normal', image: '', available: true, desc: 'ถาดเล็ก 8 ชิ้น' },
         { id: 'M004', category: 'ขนมอื่นๆ', name: 'ทองม้วนกรอบ (ไม่ห่อไส้) กระปุก', price: 89, type: 'normal', image: '', available: false, desc: 'กระปุก 20 ชิ้น' },
@@ -1304,7 +1365,12 @@ var DEMO = {
     d.menu.forEach(function (m) { menu[m.id] = m; }); d.flavors.forEach(function (f) { fl[f.id] = f.name; });
     var lines = p.items.map(function (it) {
       var m = menu[it.productId], l = { productId: m.id, name: m.name, qty: it.qty, unitPrice: m.price, total: m.price * it.qty, type: m.type };
-      if (m.type === 'flavor3') { l.pairs = it.pairs.map(function (f) { return fl[f]; }); l.text = m.name + ' (' + it.qty + ' กล่อง): ' + flavorSummary(l.pairs, it.qty); }
+      if (isFlavorMenu(m)) {
+        if (it.pairs.length !== slotCount(m)) throw new Error('กรุณาเลือกไส้ "' + m.name + '" ให้ครบ');
+        l.pairs = it.pairs.map(function (f) { return fl[f]; });
+        if (m.type === 'piece') { l.unit = 'piece'; l.pieces = m.pieces; }
+        l.text = m.name + ' (' + it.qty + ' ' + boxWord(m) + '): ' + flavorSummary(l.pairs, it.qty, m.type === 'piece');
+      }
       else l.text = m.name + ' x ' + it.qty;
       return l;
     });
